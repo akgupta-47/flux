@@ -1,5 +1,9 @@
 # Flux
 
+<p align="center">
+  <img src="assets/flux-otter.png" alt="Flux mascot: an otter riding a network current" width="280">
+</p>
+
 Flux is a cross-platform async networking utility written in Rust. The current MVP includes TCP listen/connect/proxy/forward and a UDP relay.
 
 ## Build
@@ -29,7 +33,7 @@ cargo run -- forward tcp --listen :8080 --target localhost:3000
 cargo run -- relay udp :5353 localhost:5354
 ```
 
-Set `RUST_LOG=debug` to adjust structured log verbosity. Ctrl-C stops the listener loops. TCP proxying is capped at 1024 concurrent sessions; excess clients are dropped. UDP relay state is capped at 1024 client addresses and expires after two minutes of inactivity.
+Set `RUST_LOG=debug` to adjust structured log verbosity. Ctrl-C stops the listener loops. TCP proxying defaults to 1024 concurrent sessions; configure this with `--max-connections`. TCP keepalive defaults to 60 seconds and is configurable with `--keepalive-secs`. Excess TCP clients are dropped. UDP relay state is capped at 1024 client addresses and expires after two minutes of inactivity.
 
 ## MVP boundaries
 
@@ -45,7 +49,7 @@ cargo test
 
 ## Proxy buffer tuning and benchmark
 
-TCP proxy/forward defaults to a 32 KiB copy buffer per direction and enables `TCP_NODELAY` on both proxy sockets. Set `--buffer-size` to test a value from 1 byte to 1 MiB, for example:
+TCP proxy/forward defaults to a 32 KiB copy buffer per direction and enables `TCP_NODELAY` and TCP keepalive on both proxy sockets. Set `--buffer-size` to test a value from 1 byte to 1 MiB; set `--max-connections` and `--keepalive-secs` for connection limits and keepalive tuning, for example:
 
 ```sh
 cargo run --release -- proxy tcp 127.0.0.1:8080 127.0.0.1:3000 --buffer-size 262144

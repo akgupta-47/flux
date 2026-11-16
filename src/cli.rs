@@ -46,6 +46,10 @@ pub enum ProxyProtocol {
         target: String,
         #[arg(long, default_value_t = 32768)]
         buffer_size: usize,
+        #[arg(long, default_value_t = 1024)]
+        max_connections: usize,
+        #[arg(long, default_value_t = 60)]
+        keepalive_secs: u64,
     },
 }
 #[derive(Subcommand)]
@@ -64,4 +68,8 @@ pub struct ForwardArgs {
     pub target: String,
     #[arg(long, default_value_t = 32768)]
     pub buffer_size: usize,
+    #[arg(long, default_value_t = 1024)]
+    pub max_connections: usize,
+    #[arg(long, default_value_t = 60)]
+    pub keepalive_secs: u64,
 }

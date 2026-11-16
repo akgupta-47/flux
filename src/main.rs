@@ -35,11 +35,33 @@ async fn main() -> Result<()> {
                     address,
                     target,
                     buffer_size,
+                    max_connections,
+                    keepalive_secs,
                 },
-        } => tcp::proxy(&address, &target, buffer_size, shutdown_rx).await?,
+        } => {
+            tcp::proxy_with_options(
+                &address,
+                &target,
+                buffer_size,
+                max_connections,
+                keepalive_secs,
+                shutdown_rx,
+            )
+            .await?
+        }
         Command::Forward {
             protocol: cli::ForwardProtocol::Tcp(args),
-        } => tcp::proxy(&args.listen, &args.target, args.buffer_size, shutdown_rx).await?,
+        } => {
+            tcp::proxy_with_options(
+                &args.listen,
+                &args.target,
+                args.buffer_size,
+                args.max_connections,
+                args.keepalive_secs,
+                shutdown_rx,
+            )
+            .await?
+        }
         Command::Relay {
             protocol: cli::RelayProtocol::Udp { address, target },
         } => udp::relay(&address, &target, shutdown_rx).await?,

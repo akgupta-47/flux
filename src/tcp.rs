@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use socket2::{SockRef, TcpKeepalive};
+use std::time::Duration;
 use tokio::{
     io::{self, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -61,24 +63,44 @@ pub async fn proxy(
     address: &str,
     target: &str,
     buffer_size: usize,
+    shutdown: watch::Receiver<bool>,
+) -> Result<()> {
+    proxy_with_options(address, target, buffer_size, MAX_CONNECTIONS, 60, shutdown).await
+}
+
+pub async fn proxy_with_options(
+    address: &str,
+    target: &str,
+    buffer_size: usize,
+    max_connections: usize,
+    keepalive_secs: u64,
     mut shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
     anyhow::ensure!(
         buffer_size > 0 && buffer_size <= 1_048_576,
         "buffer size must be between 1 and 1048576 bytes"
     );
+    anyhow::ensure!(
+        max_connections > 0,
+        "maximum connections must be greater than zero"
+    );
+    anyhow::ensure!(
+        keepalive_secs > 0,
+        "keepalive interval must be greater than zero"
+    );
     let listener = TcpListener::bind(address)
         .await
         .with_context(|| format!("bind TCP proxy at {address}"))?;
     let target = target.to_owned();
-    let permits = std::sync::Arc::new(Semaphore::new(MAX_CONNECTIONS));
-    info!(listen = %listener.local_addr()?, %target, max_connections = MAX_CONNECTIONS, buffer_size, "TCP proxy ready");
+    let permits = std::sync::Arc::new(Semaphore::new(max_connections));
+    info!(listen = %listener.local_addr()?, %target, max_connections, buffer_size, keepalive_secs, "TCP proxy ready");
     loop {
         tokio::select! {
             changed = shutdown.changed() => { if changed.is_err() || *shutdown.borrow() { break; } }
             accepted = listener.accept() => {
                 let (inbound, peer) = accepted?;
                 inbound.set_nodelay(true)?;
+                configure_keepalive(&inbound, keepalive_secs)?;
                 let permit = match permits.clone().try_acquire_owned() {
                     Ok(permit) => permit,
                     Err(_) => { warn!(%peer, "connection limit reached; dropping client"); continue; }
@@ -90,6 +112,10 @@ pub async fn proxy(
                         Ok(mut outbound) => {
                             if let Err(error) = outbound.set_nodelay(true) {
                                 warn!(%peer, %error, "failed to set TCP_NODELAY on upstream");
+                                return;
+                            }
+                            if let Err(error) = configure_keepalive(&outbound, keepalive_secs) {
+                                warn!(%peer, %error, "failed to configure TCP keepalive on upstream");
                                 return;
                             }
                             let mut inbound = inbound;
@@ -105,4 +131,11 @@ pub async fn proxy(
         }
     }
     Ok(())
+}
+
+fn configure_keepalive(stream: &TcpStream, secs: u64) -> Result<()> {
+    let keepalive = TcpKeepalive::new().with_time(Duration::from_secs(secs));
+    SockRef::from(stream)
+        .set_tcp_keepalive(&keepalive)
+        .context("configure TCP keepalive")
 }
