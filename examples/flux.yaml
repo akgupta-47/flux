@@ -1,0 +1,5 @@
+buffer_size: 32768
+max_connections: 1024
+keepalive_secs: 60
+idle_timeout_secs: 300
+metrics: 127.0.0.1:9090

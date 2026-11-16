@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
+    io::{AsyncBufRead, AsyncBufReadExt},
     net::UdpSocket,
     sync::{Mutex, watch},
 };
@@ -46,16 +47,20 @@ pub async fn relay(address: &str, target: &str, mut shutdown: watch::Receiver<bo
                         let downstream = listener.clone();
                         let map_ref = sessions.clone();
                         let upstream_ref = socket.clone();
+                        let mut session_shutdown = shutdown.clone();
                         tokio::spawn(async move {
                             let mut reply = vec![0u8; 65536];
                             loop {
-                                match tokio::time::timeout(Duration::from_secs(IDLE_SECS), upstream_ref.recv(&mut reply)).await {
-                                    Ok(Ok(size)) => {
-                                        if downstream.send_to(&reply[..size], client).await.is_err() { break; }
-                                        if let Some((_, last)) = map_ref.lock().await.get_mut(&client) { *last = tokio::time::Instant::now(); }
+                                tokio::select! {
+                                    changed = session_shutdown.changed() => { if changed.is_err() || *session_shutdown.borrow() { break; } }
+                                    result = tokio::time::timeout(Duration::from_secs(IDLE_SECS), upstream_ref.recv(&mut reply)) => match result {
+                                        Ok(Ok(size)) => {
+                                            if downstream.send_to(&reply[..size], client).await.is_err() { break; }
+                                            if let Some((_, last)) = map_ref.lock().await.get_mut(&client) { *last = tokio::time::Instant::now(); }
+                                        }
+                                        Ok(Err(error)) => { warn!(%client, %error, "UDP upstream receive failed"); break; }
+                                        Err(_) => break,
                                     }
-                                    Ok(Err(error)) => { warn!(%client, %error, "UDP upstream receive failed"); break; }
-                                    Err(_) => break,
                                 }
                             }
                         });
@@ -67,4 +72,107 @@ pub async fn relay(address: &str, target: &str, mut shutdown: watch::Receiver<bo
         }
     }
     Ok(())
+}
+
+pub async fn listen(address: &str, mut shutdown: watch::Receiver<bool>) -> Result<()> {
+    let socket = UdpSocket::bind(address)
+        .await
+        .with_context(|| format!("bind UDP listener at {address}"))?;
+    info!(address = %socket.local_addr()?, "UDP listener ready; datagrams are consumed and logged");
+    let mut buffer = vec![0u8; 65536];
+    loop {
+        tokio::select! {
+            changed = shutdown.changed() => { if changed.is_err() || *shutdown.borrow() { break; } }
+            received = socket.recv_from(&mut buffer) => {
+                let (bytes, peer) = received?;
+                info!(%peer, bytes, "UDP datagram received");
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn connect(address: &str, mut shutdown: watch::Receiver<bool>) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+    let target = tokio::net::lookup_host(address)
+        .await
+        .with_context(|| format!("resolve UDP target {address}"))?
+        .next()
+        .context("UDP target resolved to no addresses")?;
+    let bind_addr = if target.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    };
+    let socket = UdpSocket::bind(bind_addr).await?;
+    socket.connect(target).await?;
+    info!(%target, "connected UDP; each input line is sent as one datagram");
+    let mut input = tokio::io::BufReader::new(tokio::io::stdin());
+    let mut stdout = tokio::io::stdout();
+    let mut line = Vec::with_capacity(2048);
+    let mut reply = vec![0u8; 65536];
+    loop {
+        tokio::select! {
+            changed = shutdown.changed() => { if changed.is_err() || *shutdown.borrow() { break; } }
+            read = read_datagram_line(&mut input, &mut line) => {
+                if !read? { break; }
+                socket.send(&line).await?;
+                line.clear();
+            }
+            received = socket.recv(&mut reply) => {
+                let size = received?;
+                stdout.write_all(&reply[..size]).await?;
+                stdout.flush().await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn read_datagram_line<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+) -> Result<bool> {
+    const MAX_DATAGRAM: usize = 65_507;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            return Ok(!line.is_empty());
+        }
+        let remaining = MAX_DATAGRAM.saturating_sub(line.len());
+        if remaining == 0 {
+            anyhow::bail!("input line exceeds maximum UDP payload size");
+        }
+        let available_len = available.len();
+        let count = available_len.min(remaining);
+        let newline = available[..count].iter().position(|byte| *byte == b'\n');
+        let take = newline.map_or(count, |index| index + 1);
+        line.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if newline.is_some() {
+            return Ok(true);
+        }
+        if take < available_len || line.len() == MAX_DATAGRAM {
+            anyhow::bail!("input line exceeds maximum UDP payload size");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn udp_input_line_is_bounded_to_maximum_datagram_size() {
+        let (mut writer, reader) = tokio::io::duplex(70_000);
+        tokio::spawn(async move {
+            writer.write_all(&vec![b'x'; 65_508]).await.unwrap();
+            writer.write_all(b"\\n").await.unwrap();
+        });
+        let mut reader = tokio::io::BufReader::new(reader);
+        let mut line = Vec::new();
+        assert!(read_datagram_line(&mut reader, &mut line).await.is_err());
+        assert!(line.len() <= 65_507);
+    }
 }

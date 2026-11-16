@@ -33,23 +33,50 @@ pub enum Command {
         #[command(subcommand)]
         protocol: RelayProtocol,
     },
+    Connections {
+        #[arg(long, default_value = "127.0.0.1:9090")]
+        endpoint: String,
+    },
 }
 
 #[derive(Subcommand)]
 pub enum TcpCommand {
     Tcp { address: String },
+    Udp { address: String },
 }
 #[derive(Subcommand)]
 pub enum ProxyProtocol {
-    Tcp {
+    Tls {
         address: String,
         target: String,
+        #[arg(long)]
+        cert: String,
+        #[arg(long)]
+        key: String,
         #[arg(long, default_value_t = 32768)]
         buffer_size: usize,
         #[arg(long, default_value_t = 1024)]
         max_connections: usize,
         #[arg(long, default_value_t = 60)]
         keepalive_secs: u64,
+        #[arg(long, default_value_t = 300)]
+        idle_timeout_secs: u64,
+    },
+    Tcp {
+        address: String,
+        target: String,
+        #[arg(long)]
+        buffer_size: Option<usize>,
+        #[arg(long)]
+        max_connections: Option<usize>,
+        #[arg(long)]
+        keepalive_secs: Option<u64>,
+        #[arg(long)]
+        idle_timeout_secs: Option<u64>,
+        #[arg(long)]
+        metrics: Option<String>,
+        #[arg(long)]
+        config: Option<String>,
     },
 }
 #[derive(Subcommand)]
@@ -66,10 +93,16 @@ pub struct ForwardArgs {
     pub listen: String,
     #[arg(long)]
     pub target: String,
-    #[arg(long, default_value_t = 32768)]
-    pub buffer_size: usize,
-    #[arg(long, default_value_t = 1024)]
-    pub max_connections: usize,
-    #[arg(long, default_value_t = 60)]
-    pub keepalive_secs: u64,
+    #[arg(long)]
+    pub buffer_size: Option<usize>,
+    #[arg(long)]
+    pub max_connections: Option<usize>,
+    #[arg(long)]
+    pub keepalive_secs: Option<u64>,
+    #[arg(long)]
+    pub idle_timeout_secs: Option<u64>,
+    #[arg(long)]
+    pub metrics: Option<String>,
+    #[arg(long)]
+    pub config: Option<String>,
 }

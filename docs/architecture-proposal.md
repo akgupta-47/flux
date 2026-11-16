@@ -32,3 +32,10 @@ Use stable Rust 2024, Tokio full networking/signal/io features, clap derive, tra
 2. Implement CLI and portable Tokio TCP/UDP flows with clean shutdown and bounded resources.
 3. Add integration coverage for listener/connect/proxy/UDP data paths and shutdown behavior where practical.
 4. Format, run Clippy, run tests, and record any environmental limits.
+
+
+## Current implementation status (2026-11-17)
+
+Implemented: portable Tokio TCP listen/connect/proxy/forward and UDP listen/connect/relay; bounded TCP proxy and UDP client state; configurable proxy buffers, connection limits, keepalive, and idle expiry; structured logs; YAML proxy defaults; rustls TLS termination; Prometheus text metrics and a live connection registry; sustained socat comparison; Linux/macOS/Windows CI; Docker build and tagged target build workflow.
+
+Deferred: a true io_uring runtime and splice path. tokio-uring uses a distinct runtime and I/O types, so it cannot be swapped into the Tokio stream-copy implementation. The current benchmark results are macOS loopback results and provide no evidence that either Linux-specific path improves the intended workloads. A Linux benchmark runner and separate runtime implementation should precede adding those optimizations. Advanced routing rules, UDP IPv6 session sockets, a full TLS integration matrix, and Homebrew release publication also remain.

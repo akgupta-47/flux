@@ -1,0 +1,7 @@
+.git
+.github
+benches
+packaging
+target
+*.pem
+*.key
