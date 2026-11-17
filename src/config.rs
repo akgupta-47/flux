@@ -9,6 +9,8 @@ pub struct ProxySettings {
     pub keepalive_secs: Option<u64>,
     pub idle_timeout_secs: Option<u64>,
     pub metrics: Option<String>,
+    pub send_buffer_size: Option<usize>,
+    pub recv_buffer_size: Option<usize>,
 }
 
 pub async fn load_proxy_settings(path: &str) -> Result<ProxySettings> {

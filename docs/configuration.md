@@ -7,7 +7,9 @@ All addresses are passed to Tokio's socket bind/connect and name resolution APIs
 
 ## TCP proxy resource controls
 
-The proxy and forward commands accept `--buffer-size` (1 to 1,048,576 bytes, default 32,768), `--max-connections` (default 1,024), and `--keepalive-secs` (default 60). TCP_NODELAY is enabled on both sides. When the connection limit is reached, new clients are closed immediately. Keepalive is configured on accepted and upstream sockets. The application idle timeout defaults to 300 seconds and resets when data is read or written on either socket.
+The TCP proxy and forward commands accept `--buffer-size` (1 to 1,048,576 bytes, default 32,768), `--max-connections` (default 1,024), and `--keepalive-secs` (default 60). TCP_NODELAY is enabled on both sides. When the connection limit is reached, new clients are closed immediately. Keepalive is configured on accepted and upstream sockets. The application idle timeout defaults to 300 seconds and resets when data is read or written on either socket. Optional `--send-buffer-size` and `--recv-buffer-size` set kernel TCP socket buffers (1 to 16 MiB); operating systems may adjust the requested values. They are also supported as `send_buffer_size` and `recv_buffer_size` in YAML.
+
+Linux builds can enable the experimental io_uring backend with the `io-uring-backend` Cargo feature and `--backend io-uring`. The default is the portable Tokio backend. io_uring creates a dedicated current-thread runtime and may fail when the host kernel or container policy disallows io_uring; select `--backend tokio` in that case.
 
 
 ## Metrics and connection inspection
@@ -22,6 +24,8 @@ max_connections: 1024
 keepalive_secs: 60
 idle_timeout_secs: 300
 metrics: 127.0.0.1:9090
+send_buffer_size: 262144
+recv_buffer_size: 262144
 ```
 
 Pass it with `--config flux.yaml`. The idle timeout closes a TCP proxy session when neither side transfers data for the configured number of seconds.

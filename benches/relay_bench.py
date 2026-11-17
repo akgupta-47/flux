@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Sustained TCP relay comparison: Flux buffer sweep versus socat."""
-import asyncio, os, socket, subprocess, time, statistics
+import asyncio, os, socket, subprocess, time, statistics, sys
 from pathlib import Path
 
 FLUX = os.environ.get('FLUX_BIN', str(Path(__file__).resolve().parents[1] / 'target' / 'release' / 'flux'))
@@ -9,7 +9,15 @@ MIB_PER_CLIENT = int(os.environ.get("FLUX_BENCH_MIB_PER_CLIENT", "32"))
 CHUNK = int(os.environ.get("FLUX_BENCH_CHUNK_KIB", "64")) * 1024
 ROUNDS = int(os.environ.get("FLUX_BENCH_ROUNDS", "3"))
 COOLDOWN_SECONDS = float(os.environ.get("FLUX_BENCH_COOLDOWN", "0.5"))
+BACKEND = os.environ.get("FLUX_BENCH_BACKEND", "tokio")
 BUFFERS = (8192, 32768, 65536, 262144)
+if BACKEND not in {"tokio", "io-uring"}:
+    raise SystemExit("FLUX_BENCH_BACKEND must be 'tokio' or 'io-uring'")
+if BACKEND == "io-uring" and sys.platform != "linux":
+    raise SystemExit(
+        "The io_uring benchmark requires Linux. Build there with "
+        "'cargo build --release --features io-uring-backend', then rerun this command."
+    )
 
 
 def free_port():
@@ -104,7 +112,7 @@ async def run_round(label, command, echo_port):
 async def main():
     echo_server = await asyncio.start_server(echo, '127.0.0.1', 0)
     echo_port = echo_server.sockets[0].getsockname()[1]
-    specs = {f'Flux {b // 1024} KiB': lambda p, e, b=b: [FLUX, 'proxy', 'tcp', f'127.0.0.1:{p}', f'127.0.0.1:{e}', '--buffer-size', str(b)] for b in BUFFERS}
+    specs = {f'Flux {BACKEND} {b // 1024} KiB': lambda p, e, b=b: [FLUX, 'proxy', 'tcp', f'127.0.0.1:{p}', f'127.0.0.1:{e}', '--buffer-size', str(b), '--backend', BACKEND] for b in BUFFERS}
     specs['socat'] = lambda p, e: ['socat', f'TCP-LISTEN:{p},bind=127.0.0.1,reuseaddr,fork,nodelay', f'TCP:127.0.0.1:{e},nodelay']
     results = {name: [] for name in specs}
     try:

@@ -49,9 +49,11 @@ cargo run -- connections --endpoint 127.0.0.1:9090
 
 Set `RUST_LOG=debug` to adjust structured log verbosity. TCP proxy idle timeout defaults to 300 seconds and can be changed with `--idle-timeout-secs`. Ctrl-C stops listeners and active relay sessions. TCP proxying defaults to 1024 concurrent sessions; configure this with `--max-connections`. TCP keepalive defaults to 60 seconds and is configurable with `--keepalive-secs`. Excess TCP clients are dropped. UDP relay state is capped at 1024 client addresses and expires after two minutes of inactivity.
 
+Proxy socket buffers can be adjusted with `--send-buffer-size` and `--recv-buffer-size`; the OS may round the requested sizes. Linux builds can opt into the experimental io_uring proxy with `cargo run --release --features io-uring-backend -- proxy tcp :8080 localhost:3000 --backend io-uring`. Tokio remains the default. The io_uring path uses a dedicated runtime and should be benchmarked on the target kernel before production use.
+
 ## Current boundaries
 
-TCP listen mode consumes input and reports byte totals; it is not an echo server. Advanced forwarding rules, Linux io_uring, and Linux splice are not implemented yet. TLS termination is available with `proxy tls`; TCP metrics and connection inspection are available through `--metrics`. Proxy defaults can also be loaded from YAML with `--config`. The UDP relay uses IPv4 wildcard-bound upstream sockets and is intended for IPv4 targets. See [the architecture proposal](docs/architecture-proposal.md) and [benchmark notes](docs/benchmarks.md).
+TCP listen mode consumes input and reports byte totals; it is not an echo server. Advanced forwarding rules and Linux splice are not implemented yet. TLS termination is available with `proxy tls`; TCP metrics and connection inspection are available through `--metrics`. Proxy defaults can also be loaded from YAML with `--config`. The UDP relay uses IPv4 wildcard-bound upstream sockets and is intended for IPv4 targets. See [the architecture proposal](docs/architecture-proposal.md) and [benchmark notes](docs/benchmarks.md).
 
 ## Development
 

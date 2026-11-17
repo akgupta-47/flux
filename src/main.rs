@@ -66,6 +66,7 @@ async fn main() -> Result<()> {
                     max_connections,
                     keepalive_secs,
                     idle_timeout_secs,
+                    ..ProxyOptions::default()
                 },
                 shutdown_rx,
             )
@@ -82,6 +83,9 @@ async fn main() -> Result<()> {
                     idle_timeout_secs,
                     metrics,
                     config: config_path,
+                    backend,
+                    send_buffer_size,
+                    recv_buffer_size,
                 },
         } => {
             run_tcp_proxy(
@@ -93,8 +97,11 @@ async fn main() -> Result<()> {
                     keepalive_secs,
                     idle_timeout_secs,
                     metrics,
+                    send_buffer_size,
+                    recv_buffer_size,
                 },
                 config_path,
+                backend,
                 shutdown_rx,
             )
             .await?
@@ -111,8 +118,11 @@ async fn main() -> Result<()> {
                     keepalive_secs: args.keepalive_secs,
                     idle_timeout_secs: args.idle_timeout_secs,
                     metrics: args.metrics,
+                    send_buffer_size: args.send_buffer_size,
+                    recv_buffer_size: args.recv_buffer_size,
                 },
                 args.config,
+                args.backend,
                 shutdown_rx,
             )
             .await?
@@ -145,6 +155,7 @@ async fn run_tcp_proxy(
     target: &str,
     cli_settings: ProxySettings,
     config_path: Option<String>,
+    backend: cli::ProxyBackend,
     shutdown: watch::Receiver<bool>,
 ) -> Result<()> {
     let file_settings = match config_path {
@@ -168,16 +179,44 @@ async fn run_tcp_proxy(
             .idle_timeout_secs
             .or(file_settings.idle_timeout_secs)
             .unwrap_or(300),
+        send_buffer_size: cli_settings
+            .send_buffer_size
+            .or(file_settings.send_buffer_size),
+        recv_buffer_size: cli_settings
+            .recv_buffer_size
+            .or(file_settings.recv_buffer_size),
     };
-    if let Some(metrics_address) = cli_settings.metrics.or(file_settings.metrics) {
-        let stats = Arc::new(Metrics::default());
+    let metrics_address = cli_settings.metrics.or(file_settings.metrics);
+    let stats = Arc::new(Metrics::default());
+    if let Some(metrics_address) = metrics_address {
         let endpoint_stats = stats.clone();
         let endpoint_shutdown = shutdown.clone();
         tokio::spawn(async move {
             observability::serve(&metrics_address, endpoint_stats, endpoint_shutdown).await
         });
-        tcp::proxy_with_metrics(address, target, options, stats, shutdown).await
-    } else {
-        tcp::proxy_with_options(address, target, options, shutdown).await
+    }
+    match backend {
+        cli::ProxyBackend::Tokio => {
+            tcp::proxy_with_metrics(address, target, options, stats, shutdown).await
+        }
+        cli::ProxyBackend::IoUring => {
+            #[cfg(all(target_os = "linux", feature = "io-uring-backend"))]
+            {
+                flux::uring::proxy(
+                    address.to_owned(),
+                    target.to_owned(),
+                    options,
+                    stats,
+                    shutdown,
+                )
+                .await
+            }
+            #[cfg(not(all(target_os = "linux", feature = "io-uring-backend")))]
+            {
+                anyhow::bail!(
+                    "io_uring backend is unavailable in this build; use --features io-uring-backend on Linux or select --backend tokio"
+                )
+            }
+        }
     }
 }

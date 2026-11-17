@@ -18,6 +18,8 @@ pub struct ProxyOptions {
     pub max_connections: usize,
     pub keepalive_secs: u64,
     pub idle_timeout_secs: u64,
+    pub send_buffer_size: Option<usize>,
+    pub recv_buffer_size: Option<usize>,
 }
 impl Default for ProxyOptions {
     fn default() -> Self {
@@ -26,6 +28,8 @@ impl Default for ProxyOptions {
             max_connections: MAX_CONNECTIONS,
             keepalive_secs: 60,
             idle_timeout_secs: 300,
+            send_buffer_size: None,
+            recv_buffer_size: None,
         }
     }
 }
@@ -129,6 +133,8 @@ pub async fn proxy_with_metrics(
         max_connections,
         keepalive_secs,
         idle_timeout_secs,
+        send_buffer_size,
+        recv_buffer_size,
     } = options;
     anyhow::ensure!(
         buffer_size > 0 && buffer_size <= 1_048_576,
@@ -146,6 +152,7 @@ pub async fn proxy_with_metrics(
         idle_timeout_secs > 0,
         "idle timeout must be greater than zero"
     );
+    validate_socket_buffer_sizes(send_buffer_size, recv_buffer_size)?;
     let listener = TcpListener::bind(address)
         .await
         .with_context(|| format!("bind TCP proxy at {address}"))?;
@@ -159,6 +166,7 @@ pub async fn proxy_with_metrics(
                 let (inbound, peer) = accepted?;
                 inbound.set_nodelay(true)?;
                 configure_keepalive(&inbound, keepalive_secs)?;
+                configure_socket_buffers(&inbound, send_buffer_size, recv_buffer_size)?;
                 let permit = match permits.clone().try_acquire_owned() {
                     Ok(permit) => permit,
                     Err(_) => { metrics.reject(); warn!(%peer, "connection limit reached; dropping client"); continue; }
@@ -178,6 +186,10 @@ pub async fn proxy_with_metrics(
                             }
                             if let Err(error) = configure_keepalive(&outbound, keepalive_secs) {
                                 warn!(%peer, %error, "failed to configure TCP keepalive on upstream");
+                                return;
+                            }
+                            if let Err(error) = configure_socket_buffers(&outbound, send_buffer_size, recv_buffer_size) {
+                                warn!(%peer, %error, "failed to configure upstream socket buffers");
                                 return;
                             }
                             let mut inbound = IdleTimeoutIo::new(inbound, idle_timeout);
@@ -210,6 +222,37 @@ fn configure_keepalive(stream: &TcpStream, secs: u64) -> Result<()> {
         .context("configure TCP keepalive")
 }
 
+fn validate_socket_buffer_sizes(send: Option<usize>, recv: Option<usize>) -> Result<()> {
+    for (name, size) in [("send", send), ("receive", recv)] {
+        if let Some(size) = size {
+            anyhow::ensure!(
+                size > 0 && size <= 16 * 1024 * 1024,
+                "TCP {name} buffer size must be between 1 and 16777216 bytes"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn configure_socket_buffers(
+    stream: &TcpStream,
+    send: Option<usize>,
+    recv: Option<usize>,
+) -> Result<()> {
+    let socket = SockRef::from(stream);
+    if let Some(size) = send {
+        socket
+            .set_send_buffer_size(size)
+            .context("configure TCP send buffer")?;
+    }
+    if let Some(size) = recv {
+        socket
+            .set_recv_buffer_size(size)
+            .context("configure TCP receive buffer")?;
+    }
+    Ok(())
+}
+
 pub async fn tls_proxy(
     address: &str,
     target: &str,
@@ -224,6 +267,8 @@ pub async fn tls_proxy(
         max_connections,
         keepalive_secs,
         idle_timeout_secs,
+        send_buffer_size,
+        recv_buffer_size,
     } = options;
     anyhow::ensure!(
         buffer_size > 0 && buffer_size <= 1_048_576,
@@ -237,6 +282,7 @@ pub async fn tls_proxy(
         keepalive_secs > 0 && idle_timeout_secs > 0,
         "keepalive and idle timeout values must be greater than zero"
     );
+    validate_socket_buffer_sizes(send_buffer_size, recv_buffer_size)?;
     let cert_bytes = tokio::fs::read(cert_path)
         .await
         .with_context(|| format!("read certificate {cert_path}"))?;
@@ -269,6 +315,7 @@ pub async fn tls_proxy(
                 let (inbound, peer) = accepted?;
                 inbound.set_nodelay(true)?;
                 configure_keepalive(&inbound, keepalive_secs)?;
+                configure_socket_buffers(&inbound, send_buffer_size, recv_buffer_size)?;
                 let permit = match permits.clone().try_acquire_owned() {
                     Ok(permit) => permit,
                     Err(_) => { warn!(%peer, "connection limit reached; dropping TLS client"); continue; }
@@ -286,6 +333,7 @@ pub async fn tls_proxy(
                                     Ok(upstream) => {
                                         if let Err(error) = upstream.set_nodelay(true) { warn!(%peer, %error, "failed to configure TLS upstream socket"); return; }
                                         if let Err(error) = configure_keepalive(&upstream, keepalive_secs) { warn!(%peer, %error, "failed to configure TLS upstream socket"); return; }
+                                        if let Err(error) = configure_socket_buffers(&upstream, send_buffer_size, recv_buffer_size) { warn!(%peer, %error, "failed to configure TLS upstream socket buffers"); return; }
                                         let mut tls_stream = IdleTimeoutIo::new(tls_stream, Duration::from_secs(idle_timeout_secs));
                                         let mut upstream = IdleTimeoutIo::new(upstream, Duration::from_secs(idle_timeout_secs));
                                         match io::copy_bidirectional_with_sizes(&mut tls_stream, &mut upstream, buffer_size, buffer_size).await {

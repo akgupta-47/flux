@@ -1,4 +1,11 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum ProxyBackend {
+    #[default]
+    Tokio,
+    IoUring,
+}
 
 #[derive(Parser)]
 #[command(
@@ -77,6 +84,12 @@ pub enum ProxyProtocol {
         metrics: Option<String>,
         #[arg(long)]
         config: Option<String>,
+        #[arg(long, value_enum, default_value = "tokio")]
+        backend: ProxyBackend,
+        #[arg(long)]
+        send_buffer_size: Option<usize>,
+        #[arg(long)]
+        recv_buffer_size: Option<usize>,
     },
 }
 #[derive(Subcommand)]
@@ -105,4 +118,10 @@ pub struct ForwardArgs {
     pub metrics: Option<String>,
     #[arg(long)]
     pub config: Option<String>,
+    #[arg(long, value_enum, default_value = "tokio")]
+    pub backend: ProxyBackend,
+    #[arg(long)]
+    pub send_buffer_size: Option<usize>,
+    #[arg(long)]
+    pub recv_buffer_size: Option<usize>,
 }
